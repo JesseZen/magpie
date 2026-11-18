@@ -1000,7 +1000,7 @@ func (s *Server) routes() *routeMux {
 	// Claude Desktop's third-party gateway looks for one here before it
 	// takes the address
 	mux.HandleFunc("GET /api/hello", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"name": "magpie", "version": Version})
+		writeJSON(w, 200, map[string]any{"name": "magpie", "version": Version, "codex_caller_only": settings.CodexCallerOnly(), "codex_profile_isolation": settings.CodexCallerOnly()})
 	})
 	// the Ollama API's model routes, for a client that takes a custom
 	// endpoint only as an Ollama server (ollama.go)
@@ -5802,6 +5802,9 @@ func (s *Server) forward(ctx context.Context, p provider.Provider, to provider.P
 
 // forwardOnce is one request to the provider, as forward makes it.
 func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provider.Protocol, path string, body []byte, in http.Header) (*http.Response, error) {
+	if ctx.Value(callerOnlyKey{}) != nil && p.Account != nil && p.Account.Agent == "codex" {
+		return nil, errors.New("Codex account-pool models are unavailable in caller-only mode; choose an official model directly")
+	}
 	reqCtx := ctx
 	ctx = s.metered(p.Via(ctx), p, "")
 	body = deepseekToolPatterns(p, to, body)

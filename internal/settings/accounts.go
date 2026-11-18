@@ -40,3 +40,9 @@ func noAccountsEnv() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("MAGPIE_NO_ACCOUNTS")))
 	return v != "" && v != "0" && v != "false"
 }
+
+// CodexCallerOnly keeps Codex's own sign-in out of magpie's account pool.
+// The Codex backend instead relays official requests with the caller's login.
+func CodexCallerOnly() bool {
+	return os.Getenv("MAGPIE_CODEX_CALLER_ONLY") == "1"
+}

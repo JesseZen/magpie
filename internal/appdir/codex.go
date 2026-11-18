@@ -51,6 +51,12 @@ func CodexHomes() []string {
 
 // CodexHomesIn is CodexHomes with home as the user's home folder.
 func CodexHomesIn(home string) []string {
+	// Harbor Profiles own their credentials and histories. Caller-only gateway
+	// and management processes must not enumerate any Codex data directories.
+	if os.Getenv("MAGPIE_CODEX_CALLER_ONLY") == "1" {
+		return nil
+	}
+
 	main := CodexHomeIn(home)
 	out := []string{main}
 	seen := map[string]bool{sameDir(main): true}

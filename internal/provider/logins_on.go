@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/filelock"
+	"github.com/yetone/magpie/internal/settings"
 )
 
 // savedTokenMu keeps two requests from refreshing one saved account at
@@ -223,6 +224,9 @@ func renewSavedLoginFrom(ctx context.Context, agent, user, stale string) (tok, a
 }
 
 func renewSaved(ctx context.Context, agent, user string, force bool, stale string) (tok, accountID string, err error) {
+	if agent == "codex" && settings.CodexCallerOnly() {
+		return "", "", errors.New("Codex account refresh is disabled in caller-only mode")
+	}
 	ctx = ViaLogin(ctx, agent, user) // refreshed through the account's own proxy
 	savedTokenMu.Lock()
 	defer savedTokenMu.Unlock()

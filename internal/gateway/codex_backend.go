@@ -13,6 +13,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptrace"
+	"net/http/httputil"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -41,6 +43,38 @@ import (
 // in /backend-api/codex keeps Codex treating it as that backend.
 const CodexPath = "/backend-api/codex"
 
+// callerOnlyKey follows a joined Codex request through third-party routing.
+type callerOnlyKey struct{}
+
+// codexCallerRelay lets Codex's official backend handle the request with the
+// headers and sign-in Codex sent. It does not consult or retry on a pool.
+func (s *Server) codexCallerRelay(w http.ResponseWriter, r *http.Request, rest string, body []byte) {
+	base := provider.CodexBase
+	if apiKey(r.Header) && rest != "/models" {
+		base = codexAPIBase
+	}
+	target, err := url.Parse(base)
+	if err != nil {
+		http.Error(w, "invalid Codex backend URL", http.StatusBadGateway)
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	director := proxy.Director
+	proxy.Director = func(out *http.Request) {
+		director(out)
+		out.Host = target.Host
+		out.Header["X-Forwarded-For"] = nil
+	}
+	// Do not pass official turns through Magpie's translating or retrying transport.
+	proxy.Transport = http.DefaultTransport
+	proxy.FlushInterval = -1
+	req := r.Clone(r.Context())
+	req.URL.Path, req.URL.RawPath = rest, ""
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	proxy.ServeHTTP(w, req)
+}
+
 // codexAPIBase is where a Codex signed in with an API key sends its requests;
 // its model list still comes from the ChatGPT backend. A var so tests can
 // point it elsewhere.
@@ -67,10 +101,19 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 const codexSummaryPrefix = codexsummary.Prefix
 
 func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
+	if settings.CodexCallerOnly() {
+		r = r.WithContext(context.WithValue(r.Context(), callerOnlyKey{}, true))
+	}
 	// Responses over a WebSocket, Codex's own way to its provider: each
 	// turn is served as its POST is (responses_ws.go), and Codex sends
 	// only a turn's new input after the reply it follows (#4058)
 	if wantsSocket(r) {
+		if settings.CodexCallerOnly() {
+			// Codex falls back to its own HTTP transport, keeping official turns
+			// out of Magpie's WebSocket conversation reconstruction.
+			http.Error(w, "use HTTP for caller-only Codex", http.StatusUpgradeRequired)
+			return
+		}
 		if strings.TrimPrefix(r.URL.Path, CodexPath) == "/responses" && s.serveResponsesSocket(w, r) {
 			return
 		}
@@ -86,6 +129,23 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 	body, ok := s.readRequestBody(w, r, provider.Responses, s.codexLimitOf())
 	if !ok {
 		return
+	}
+	if settings.CodexCallerOnly() && !(r.Method == http.MethodGet && rest == "/models") {
+		model := modelOf(body)
+		// Namespaced models and groups are magpie's. Everything else uses
+		// the caller's own backend, including native compaction and search.
+		routed := rest == "/responses" || rest == "/responses/compact" || rest == AlphaSearchPath
+		if !routed || !strings.Contains(model, "/") {
+			if routed && (rest == "/responses" || rest == "/responses/compact") {
+				body, _ = codexInput(body, false)
+				if cp, foreign := foreignToSignin(body); foreign {
+					writeError(w, provider.Responses, 400, checkpointError(model, cp))
+					return
+				}
+			}
+			s.codexCallerRelay(w, r, rest, body)
+			return
+		}
 	}
 	var err error
 	switch {

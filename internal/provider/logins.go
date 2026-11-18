@@ -975,6 +975,9 @@ func rememberLogins(force bool) {
 	now := time.Now().UTC().Truncate(time.Second)
 	changed := false
 	for _, agent := range loginAgents {
+		if agent == "codex" && settings.CodexCallerOnly() {
+			continue
+		}
 		if accountRemoved(agent) {
 			continue
 		}

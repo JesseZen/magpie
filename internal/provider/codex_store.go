@@ -39,6 +39,7 @@ import (
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/proc"
+	"github.com/yetone/magpie/internal/settings"
 )
 
 const codexKeychainService = "Codex Auth"
@@ -517,6 +518,9 @@ func codexKeychainUnread(err error) bool {
 // nothing is saved over it (saveCodexLogin).
 func readCodexLogin(home string, fresh bool) ([]byte, codexStore, error) {
 	st := codexStore{home: home}
+	if settings.CodexCallerOnly() {
+		return nil, st, errors.New("Codex account discovery is disabled in caller-only mode")
+	}
 	if discoveryOff() {
 		return nil, st, errAccountDiscoveryOff
 	}
@@ -596,6 +600,9 @@ func (s codexStore) write(b []byte) error {
 // left beside a keychain item is left to Codex, which removes it at its
 // next save; the item goes first when it reads.
 func saveCodexLogin(home string, b []byte) error {
+	if settings.CodexCallerOnly() {
+		return errors.New("Codex login writes are disabled in caller-only mode")
+	}
 	if discoveryOff() {
 		return errAccountDiscoveryOff
 	}
@@ -639,6 +646,9 @@ func saveCodexLogin(home string, b []byte) error {
 // for this home and auth.json both go (auto would fall back to the file).
 // The item not removed, the file is left too.
 func deleteCodexLogin(home string) error {
+	if settings.CodexCallerOnly() {
+		return errors.New("Codex login writes are disabled in caller-only mode")
+	}
 	if discoveryOff() {
 		return errAccountDiscoveryOff
 	}
